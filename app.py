@@ -437,8 +437,8 @@ class MainWindow(QMainWindow):
         
             dialog = BatchExtractDialog(self, max_time=max_time_str, current_time=current_time_str, img_width=frame_width, img_height=frame_height, fps=self.frame_rate)
             # Run batch extract with params, show progress
-            if dialog.exec():
-                dialog.batch_extract_triggered.connect(lambda params: self.run_batch_extract(params, dialog))
+            dialog.batch_extract_triggered.connect(lambda params: self.run_batch_extract(params, dialog))
+            dialog.exec()
         except Exception as e:
             logger.error(f"{e}")
             QMessageBox.warning(self, "Error", f"{e}")
@@ -620,3 +620,4 @@ class MainWindow(QMainWindow):
     def lock_window_size(self):
         # Lock current window size
         self.setFixedSize(self.size())
+
