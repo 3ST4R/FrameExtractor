@@ -1,4 +1,4 @@
-Interactive Frame Extractor v0.1.0
+Interactive Frame Extractor v0.1.1
 
 - Video playback feature with seekbar (mimics commonly known video players)  
 - Manual frame saving feature (for extracting selective frames from video)
