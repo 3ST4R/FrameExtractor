@@ -11,12 +11,18 @@ from PyQt6.QtCore import Qt, pyqtSignal
 class BatchExtractDialog(QDialog):
     batch_extract_triggered = pyqtSignal(dict)
     
-    def __init__(self, parent, max_time, current_time):
+    def __init__(self, parent, max_time, current_time, img_width, img_height, fps):
         super().__init__(parent)
         self.worker = None
         self.setWindowTitle("Batch Extract")
         self.setWindowIcon(newIcon("batch"))
         self.resize(250, 350)
+        
+        self.img_width = img_width
+        self.img_height = img_height
+        self.current_time = current_time
+        self.max_time = max_time
+        self.fps = fps
         
         layout = QVBoxLayout(self)
         
@@ -25,7 +31,7 @@ class BatchExtractDialog(QDialog):
         
         # Start time
         grid.addWidget(QLabel("Start time: "), 0, 0) # Row 1, Column 1
-        self.start_edit = QLineEdit(str(current_time))
+        self.start_edit = QLineEdit(str(self.current_time))
         self.start_edit.setFixedWidth(80)
         self.start_edit.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.start_edit.setCursorPosition(0)
@@ -33,7 +39,7 @@ class BatchExtractDialog(QDialog):
         
         # End time
         grid.addWidget(QLabel("End time: "), 1, 0) # Row 2, Column 1
-        self.end_edit = QLineEdit(str(max_time))
+        self.end_edit = QLineEdit(str(self.max_time))
         self.end_edit.setFixedWidth(80)
         self.end_edit.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.end_edit.setCursorPosition(0)
@@ -129,23 +135,16 @@ class BatchExtractDialog(QDialog):
         self.p_status.setText(f"Extracting... [{current_frame}/{total_frames} frames]")
         
     def on_extract_clicked(self):
-        # Validate and round time inputs to HH:MM:SS
-        for time_edit in (self.start_edit, self.end_edit):
-            text = time_edit.text()
-            # Round frames per sec if present
-            m = re.match(r'^(\d{1,2}:\d{2}:\d{2})(\.\d{2,3})?$', text)
-            if not m:
-                QMessageBox.warning(self, "Invalid input", f"Time '{text}' is invalid. Please use HH:MM:SS format.")
+        try:
+            params = self.get_params()
+            if not params:
                 return
-            else:
-                time_edit.setText(m.group(0))
-                
-        params = self.get_params()
-        if not params:
-            return
-        self.extract_btn.setEnabled(False)
-        self.batch_extract_triggered.emit(params)
-        
+            self.extract_btn.setEnabled(False)
+            self.batch_extract_triggered.emit(params)
+        except Exception as e:
+            logger.error(f"{e}")
+            QMessageBox.warning(self, "Error", f"{e}")
+            
     def on_finished(self):
         self.extract_btn.setEnabled(True)
         QMessageBox.information(self, "Batch Extract", "Extraction complete!")
@@ -153,29 +152,119 @@ class BatchExtractDialog(QDialog):
         
     def get_params(self):
         """Return dictionary of user-entered parameters with validation"""
+        error_conditions = {}
         try:
-            start_time = self.start_edit.text()
-            end_time = self.end_edit.text()
-            frame_step = int(self.step_edit.text())
-            if frame_step < 1:
-                logger.error("Frame step must be >= 1")
-                raise ValueError("Frame step must be >= 1")
+            time_vals = []
+            labels = ['Start time', 'End time']
+            # Validate and set time inputs to HH:MM:SS[.ff]
+            time_edits = (self.start_edit, self.end_edit)
+            for idx, time_edit in enumerate(time_edits):
+                text = time_edit.text()
+                # Round frames per sec if present
+                m = re.match(r'^(\d{1,2}:\d{2}:\d{2})(\.\d{2,3})?$', text)
+                error_conditions[f"Time '{text}' for '{labels[idx]}' is invalid. Please use HH:MM:SS format."] = not bool(m)
+                if not m:
+                    time_vals.append(None)
+                else:
+                    time_edit.setText(m.group(0))
+                    time_vals.append(time_edit.text().strip())
+            
+            start_time = str(self.current_time) if time_vals[0] is None else time_vals[0]
+            end_time = str(self.max_time) if time_vals[1] is None else time_vals[1]
+
+            start_secs = self.hms_to_secs(start_time, self.fps)
+            end_secs = self.hms_to_secs(end_time, self.fps)
+            error_conditions["'Start time' must be less than 'End time'"] = not start_secs < end_secs
+            
+            # Frame step validation
+            frame_step = self.step_edit.text().strip()
+            error_conditions["'Frame step' must be an integer"] = not self.is_int(frame_step)
+            if self.is_int(frame_step):
+                frame_step = int(frame_step)
+            else:
+                frame_step = 1
+            condition = frame_step >= 1
+            error_conditions["'Frame step' must be >= 1"] = not condition
+            if condition:
+                frame_step = 1
+            
+            # ROI coords validation
             roi = None
             if self.crop_roi_chkbx.isChecked():
-                try:
-                    roi = tuple(int(edit.text()) for edit in self.roi_edits)
-                except (ValueError, TypeError) as e:
-                    logger.error(f"ROI inputs not in ('int', 'float'): {e}")
-                    raise
-                if not (roi[0] < roi[2] and roi[1] < roi[3]):
-                    logger.error("Invalid ROI coordinates")
-                    raise ValueError("Invalid ROI coordinates")
+                invalid_roi_val = False
+                roi_vals = []
+                for idx, edit in enumerate(self.roi_edits):
+                    val = edit.text().strip()
+                    condition = self.is_int_float(val)
+                    error_conditions[f"'{['x1','y1','x2','y2'][idx]}' must be an integer"] = not condition
+                    if not condition:
+                        invalid_roi_val = True
+                    else:
+                        roi_vals.append(int(float(val)))
+                        
+                if not invalid_roi_val and len(roi_vals) == 4:
+                    roi = tuple(roi_vals)
+                    error_conditions.update({
+                        "x1 must be less than x2": not roi[0] < roi[2],
+                        "y1 must be less than y2": not roi[1] < roi[3],
+                        "x1 must be equal to or more than 0": not roi[0] >= 0,
+                        "y1 must be equal to or more than 0": not roi[1] >= 0,
+                        "x2 must be more than 0": not roi[2] > 0,
+                        "y2 must be more than 0": not roi[3] > 0,
+                        "x1 must be less than image width": not roi[0] < self.img_width,
+                        "y1 must be less than image height": not roi[1] < self.img_height,
+                        "x2 must be less than or equal to image width": not roi[2] <= self.img_width,
+                        "y2 must be less than or equal to image height": not roi[3] <= self.img_height
+                    })
+                    
+            # Log validation checks if errors found        
+            errors = [msg for msg, con in error_conditions.items() if con]
+            if errors:
+                for err in errors:
+                    logger.error(err)
+                if len(errors) > 1:
+                    errors = [f'{i}) ' + msg for i, msg in enumerate(errors, 1)]
+                raise ValueError('\n'.join(errors))
+            
             return dict(
                 start_time=start_time,
                 end_time=end_time,
                 frame_step=frame_step,
                 roi=roi
             )
-        except (ValueError, TypeError) as e:
-            QMessageBox.warning(self, "Invalid input", f"Invalid input: {e}")
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid input", f"Invalid input:\n{e}")
             return None
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"{e}")
+            return None
+            
+    def is_int_float(self, string: str):
+        int_bool = False
+        float_bool = False
+        try:
+            int(string)
+            int_bool = True
+        except ValueError:
+            pass
+        try:
+            float(string)
+            float_bool = True
+        except ValueError:
+            pass
+        return int_bool or float_bool
+        
+    def is_int(self, string: str):
+        try:
+            int_val = int(string)
+            return isinstance(int_val, int)
+        except ValueError:
+            return False
+            
+    def hms_to_secs(self, hms_str, fps):
+        h, m, sf = hms_str.split(":")
+        if '.' in sf:
+            s, f = map(int, sf.split('.'))
+        else:
+            s, f = map(int, (sf, 0))
+        return int(h)*3600 + int(m)*60 + s + (f/fps)
