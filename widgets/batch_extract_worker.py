@@ -1,4 +1,5 @@
-import os, time
+import os
+# import time
 from PyQt6.QtCore import QThread, pyqtSignal
 
 class BatchExtractWorker(QThread):
@@ -45,4 +46,5 @@ class BatchExtractWorker(QThread):
         self.finished.emit()
         
     def stop(self):
+
         self._running = False
