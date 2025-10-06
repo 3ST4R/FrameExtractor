@@ -185,7 +185,7 @@ class BatchExtractDialog(QDialog):
                 frame_step = 1
             condition = frame_step >= 1
             error_conditions["'Frame step' must be >= 1"] = not condition
-            if condition:
+            if not condition:
                 frame_step = 1
             
             # ROI coords validation
@@ -268,3 +268,4 @@ class BatchExtractDialog(QDialog):
         else:
             s, f = map(int, (sf, 0))
         return int(h)*3600 + int(m)*60 + s + (f/fps)
+
