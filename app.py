@@ -426,15 +426,23 @@ class MainWindow(QMainWindow):
         if not self.cap:
             QMessageBox.information(self, __appname__, "Please load a video first.")
             return
-        max_secs = self.frame_count / self.frame_rate if self.frame_rate else 0
-        max_time_str = self.format_time(max_secs, self.frame_rate)
-        current_secs = self.current_frame / self.frame_rate if self.frame_rate else 0
-        current_time_str = self.format_time(current_secs, self.frame_rate)
+        try:
+            max_secs = self.frame_count / self.frame_rate if self.frame_rate else 0
+            max_time_str = self.format_time(max_secs, self.frame_rate)
+            current_secs = self.current_frame / self.frame_rate if self.frame_rate else 0
+            current_time_str = self.format_time(current_secs, self.frame_rate)
+            
+            frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
-        dialog = BatchExtractDialog(self, max_time=max_time_str, current_time=current_time_str)
-        # Run batch extract with params, show progress
-        dialog.batch_extract_triggered.connect(lambda params: self.run_batch_extract(params, dialog))
-        dialog.exec()
+            dialog = BatchExtractDialog(self, max_time=max_time_str, current_time=current_time_str, img_width=frame_width, img_height=frame_height, fps=self.frame_rate)
+            # Run batch extract with params, show progress
+            if dialog.exec():
+                dialog.batch_extract_triggered.connect(lambda params: self.run_batch_extract(params, dialog))
+        except Exception as e:
+            logger.error(f"{e}")
+            QMessageBox.warning(self, "Error", f"{e}")
+        
             
     def hms_to_secs(self, hms_str, fps):
         h, m, sf = hms_str.split(":")
